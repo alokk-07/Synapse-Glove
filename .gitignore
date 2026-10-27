@@ -1,0 +1,33 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C / C++ / Arduino Build Artifacts
+*.o
+*.d
+*.elf
+*.bin
+*.hex
+build/
+.pio/
+.vscode/
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Distribution / packaging
+dist/
+*.egg-info/
+
+# Operating System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment variables
+.env
+.env.local

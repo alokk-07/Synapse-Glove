@@ -1,0 +1,5 @@
+command : python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+url : http://localhost:8000
+
+reupload script : pio run -t upload
+check hotspt ip : ipconfig

@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Synapse Glove | Biomedical DSP Telemetry</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- HEADER -->
+    <header class="header-deck neumorph-flat">
+      <div class="brand">
+        <div class="pulse-indicator-dot" id="pulseDot"></div>
+        <div class="brand-text">
+          <h1 class="brand-title">SYNAPSE GLOVE</h1>
+          <p class="brand-subtitle">BIOMEDICAL SIGNAL ACQUISITION &amp; DSP TELEMETRY PLATFORM</p>
+        </div>
+      </div>
+      
+      <div class="header-actions">
+        <div class="source-toggle neumorph-pressed" id="sourceToggleContainer">
+          <button id="btnHardware" class="toggle-btn active" title="Use Live ESP32 Wi-Fi Stream">ESP32 LIVE</button>
+          <button id="btnSimulation" class="toggle-btn" title="Run Real-Time PPG Synthetic Simulator">SIMULATOR</button>
+        </div>
+        <div class="status-pill neumorph-flat" id="connectionBadge">
+          <span class="status-dot connected"></span>
+          <span class="status-text" id="connectionStatusText">CONNECTING...</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- MAIN DASHBOARD GRID -->
+    <main class="dashboard-grid">
+      
+      <!-- TOP CENTER: OSCILLOSCOPE MONITOR -->
+      <section class="card oscilloscope-card neumorph-flat">
+        <div class="card-header">
+          <div class="title-with-meta">
+            <h2 class="card-title">ARTERIAL PULSE WAVEFORM (PPG)</h2>
+            <span class="meta-tag">60 FPS REAL-TIME CANVAS • 250 HZ ADC</span>
+          </div>
+          <div class="canvas-controls">
+            <label class="toggle-switch">
+              <input type="checkbox" id="toggleRawSignal">
+              <span class="slider-switch neumorph-flat"></span>
+              <span class="toggle-label">Overlay Raw Signal</span>
+            </label>
+            <button id="btnClearCanvas" class="btn-icon neumorph-button" title="Clear Buffer">↺</button>
+          </div>
+        </div>
+
+        <!-- Canvas Container Well (Neumorphic Inset) -->
+        <div class="canvas-well neumorph-pressed">
+          <canvas id="waveformCanvas"></canvas>
+          <div class="canvas-overlay-grid"></div>
+          <div class="canvas-legend">
+            <span class="legend-item"><span class="legend-color filtered"></span> Filtered Pulse (Stage 3)</span>
+            <span class="legend-item" id="rawLegendItem" style="display:none;"><span class="legend-color raw"></span> Raw ADC (Noisy)</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- BOTTOM CONTROL DECK & TELEMETRY -->
+      <div class="bottom-split-row">
+        
+        <!-- BOTTOM LEFT: X, Y, Z DSP FILTER CONTROL DECK -->
+        <section class="card filter-deck-card neumorph-flat">
+          <div class="card-header">
+            <div class="title-with-meta">
+              <h2 class="card-title">DSP FILTER CUTOFF DECK</h2>
+              <span class="meta-tag">SCIPY 3-STAGE REAL-TIME PIPELINE</span>
+            </div>
+            <button id="btnResetFilters" class="btn-small neumorph-button">Reset Defaults</button>
+          </div>
+
+          <div class="sliders-list">
+            
+            <!-- SLIDER X: HIGH-PASS FILTER -->
+            <div class="slider-group">
+              <div class="slider-header">
+                <div class="slider-title-wrap">
+                  <span class="filter-badge badge-x">X</span>
+                  <div>
+                    <span class="slider-name">High-Pass Filter (Baseline Wander)</span>
+                    <p class="slider-microcopy">Strips breathing drift, hand pressure fluctuations &amp; DC offset.</p>
+                  </div>
+                </div>
+                <div class="slider-val-badge neumorph-pressed" id="valHp">0.5 Hz</div>
+              </div>
+              <input type="range" id="sliderHp" min="0.05" max="3.00" step="0.05" value="0.50" class="neumorph-slider">
+              <div class="slider-scale">
+                <span>0.05 Hz</span>
+                <span>Default: 0.50 Hz</span>
+                <span>3.00 Hz</span>
+              </div>
+            </div>
+
+            <!-- SLIDER Y: NOTCH FILTER -->
+            <div class="slider-group">
+              <div class="slider-header">
+                <div class="slider-title-wrap">
+                  <span class="filter-badge badge-y">Y</span>
+                  <div>
+                    <span class="slider-name">Notch Filter (Mains Interference)</span>
+                    <p class="slider-microcopy">Surgically eliminates 50 Hz AC electrical grid hum without harming pulse peaks.</p>
+                  </div>
+                </div>
+                <div class="slider-val-badge neumorph-pressed" id="valNotch">50.0 Hz</div>
+              </div>
+              <input type="range" id="sliderNotch" min="45.0" max="65.0" step="0.5" value="50.0" class="neumorph-slider">
+              <div class="slider-scale">
+                <span>45.0 Hz</span>
+                <span>50 Hz (India/EU) / 60 Hz (US)</span>
+                <span>65.0 Hz</span>
+              </div>
+            </div>
+
+            <!-- SLIDER Z: LOW-PASS FILTER -->
+            <div class="slider-group">
+              <div class="slider-header">
+                <div class="slider-title-wrap">
+                  <span class="filter-badge badge-z">Z</span>
+                  <div>
+                    <span class="slider-name">Low-Pass Filter (Muscle Tremor / EMG)</span>
+                    <p class="slider-microcopy">Attenuates high-frequency muscle twitch jitter and optical noise.</p>
+                  </div>
+                </div>
+                <div class="slider-val-badge neumorph-pressed" id="valLp">40.0 Hz</div>
+              </div>
+              <input type="range" id="sliderLp" min="5.0" max="60.0" step="1.0" value="40.0" class="neumorph-slider">
+              <div class="slider-scale">
+                <span>5.0 Hz</span>
+                <span>Default: 40.0 Hz</span>
+                <span>60.0 Hz</span>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- BOTTOM RIGHT: SYSTEM TELEMETRY & HEALTH CHECKS -->
+        <section class="card telemetry-card neumorph-flat">
+          <div class="card-header">
+            <div class="title-with-meta">
+              <h2 class="card-title">SYSTEM TELEMETRY &amp; VITALS</h2>
+              <span class="meta-tag">HARDWARE HEALTH CHECKS</span>
+            </div>
+          </div>
+
+          <div class="telemetry-grid">
+            
+            <!-- METRIC 1: HEART RATE (BPM) -->
+            <div class="metric-card neumorph-flat">
+              <div class="metric-header">
+                <span class="metric-label">HEART RATE</span>
+                <span class="metric-icon">❤️</span>
+              </div>
+              <div class="metric-body">
+                <span class="metric-value text-accent" id="metricBpm">--</span>
+                <span class="metric-unit">BPM</span>
+              </div>
+              <div class="metric-footer">Systolic Peak Interval</div>
+            </div>
+
+            <!-- METRIC 2: SAMPLING RATE -->
+            <div class="metric-card neumorph-flat">
+              <div class="metric-header">
+                <span class="metric-label">SAMPLING RATE</span>
+                <span class="metric-icon">⏱️</span>
+              </div>
+              <div class="metric-body">
+                <span class="metric-value" id="metricFs">250.0</span>
+                <span class="metric-unit">Hz</span>
+              </div>
+              <div class="metric-footer" id="metricFsStatus">Stable (Target 250 Hz)</div>
+            </div>
+
+            <!-- METRIC 3: SIGNAL-TO-NOISE RATIO -->
+            <div class="metric-card neumorph-flat">
+              <div class="metric-header">
+                <span class="metric-label">SIGNAL-TO-NOISE</span>
+                <span class="metric-icon">📶</span>
+              </div>
+              <div class="metric-body">
+                <span class="metric-value" id="metricSnr">--</span>
+                <span class="metric-unit">dB</span>
+              </div>
+              <div class="metric-footer">Real-Time Spectral Purity</div>
+            </div>
+
+            <!-- METRIC 4: BATTERY VOLTAGE -->
+            <div class="metric-card neumorph-flat">
+              <div class="metric-header">
+                <span class="metric-label">POWER SUBSYSTEM</span>
+                <span class="metric-icon">🔋</span>
+              </div>
+              <div class="metric-body">
+                <span class="metric-value" id="metricVbat">3.0</span>
+                <span class="metric-unit">V</span>
+              </div>
+              <div class="metric-footer">2x AAA Battery Rail</div>
+            </div>
+
+          </div>
+
+          <!-- SIGNAL QUALITY BAR -->
+          <div class="sqi-container neumorph-pressed">
+            <div class="sqi-label-wrap">
+              <span class="sqi-title">SIGNAL QUALITY INDEX (SQI)</span>
+              <span class="sqi-value" id="sqiValueText">85%</span>
+            </div>
+            <div class="sqi-track">
+              <div class="sqi-fill" id="sqiFillBar" style="width: 85%;"></div>
+            </div>
+          </div>
+
+        </section>
+
+      </div>
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="footer-bar">
+      <span>SYNAPSE GLOVE • SIGNALS &amp; SYSTEMS ACADEMIC PROJECT • ESP32 &amp; SCIPY DSP</span>
+      <span id="footerConnectionInfo">WebSocket Status: Connecting to backend...</span>
+    </footer>
+
+  </div>
+
+  <!-- JAVASCRIPT MODULES -->
+  <script src="/static/js/canvas_wave.js"></script>
+  <script src="/static/js/ui_controls.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
