@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 
 from app.controllers.stream_controller import StreamController
 from app.controllers.routes import register_routes
+from app.controllers.mdns_broadcaster import MDNSBroadcaster
 
 # Configure logging
 logging.basicConfig(
@@ -23,14 +24,17 @@ logging.basicConfig(
 )
 
 controller = StreamController()
+mdns = MDNSBroadcaster(port=8000)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Launch DSP streaming engine & simulation background loop
+    # Startup: Launch DSP streaming engine & mDNS network advertisement
     await controller.start()
+    mdns.start()
     yield
-    # Shutdown: Cleanly terminate background tasks
+    # Shutdown: Cleanly terminate background tasks & unregister mDNS
+    mdns.stop()
     await controller.stop()
 
 

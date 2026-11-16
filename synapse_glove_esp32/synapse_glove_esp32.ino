@@ -1,59 +1,39 @@
 /*
   ==============================================================================
-   SYNAPSE GLOVE - ESP32 FIRMWARE (C++ / Arduino)
+   SYNAPSE GLOVE - ESP32 FIRMWARE (C++ / Arduino) - ZERO-HARDCODE VERSION
   ==============================================================================
    Project: Synapse Glove - Biomedical Signal Acquisition & Tactile Probing Node
    Framework: Arduino ESP32 Core
    Target Board: ESP32-WROOM-32 (30-pin DevKit)
    
-   Functional Description:
-   - Configures ADC1 (GPIO 34) for clean analog sampling independent of Wi-Fi.
-   - Implements a hardware-accurate 250 Hz sampling clock (dt = 4000 microseconds).
-   - Establishes a Wi-Fi connection and maintains a persistent WebSocket stream 
-     to the Python FastAPI DSP backend.
-   - Transmits batched sample payloads to minimize Wi-Fi frame overhead while
-     maintaining near-zero (<20ms) telemetry latency.
+   Zero-Hardcode Architecture:
+   - Wi-Fi: Managed dynamically via WiFiManager (Captive portal AP: SynapseGlove-Setup).
+   - Server Discovery: Discovered dynamically via mDNS (querying "_synapse._tcp" 
+     and resolving laptop's local IP / port).
+   - ADC: Configured on ADC1 (GPIO 34) for clean analog sampling independent of Wi-Fi.
+   - Sampling: Hardware-accurate 250 Hz sampling clock (dt = 4000 us).
+   - WebSocket: Batched streaming over WebSocket to the auto-discovered backend.
   ==============================================================================
 */
 
 #include <WiFi.h>
-#include <WebSocketsClient.h> // Library: "WebSockets" by Markus Sattler (Install via Library Manager)
+#include <ESPmDNS.h>
+#include <WiFiManager.h>        // Library: tzapu/WiFiManager (ESP32 compatible)
+#include <WebSocketsClient.h>   // Library: Markus Sattler WebSockets
 
 // ==============================================================================
-// 1. NETWORK & BACKEND CONFIGURATION
-// ==============================================================================
-// Replace with your local Wi-Fi credentials
-const char* WIFI_SSID     = "realme 11x 5G";
-const char* WIFI_PASSWORD = "PHOENIX1";
-
-// Replace with your Laptop / Host Machine's Local IP address (e.g., "192.168.1.100")
-// Run 'ipconfig' (Windows) to find your IPv4 Address.
-const char* SERVER_HOST   = "10.38.247.22";
-const uint16_t SERVER_PORT = 8000;
-const char* SERVER_PATH   = "/ws/esp32";
-
-// ==============================================================================
-// 2. HARDWARE PIN DEFINITIONS
+// 1. HARDWARE PIN DEFINITIONS & SAMPLING CONSTANTS
 // ==============================================================================
 // MUST BE AN ADC1 PIN! (ADC2 is automatically disabled when ESP32 Wi-Fi is active)
-// Supported ADC1 pins: 32, 33, 34, 35, 36 (VP), 39 (VN)
 #define PULSE_SENSOR_PIN   34
+#define STATUS_LED_PIN     2    // Onboard diagnostic LED
 
-// Onboard diagnostic LED (Optional, GPIO 2 on most ESP32 boards)
-#define STATUS_LED_PIN     2
-
-// ==============================================================================
-// 3. SAMPLING & BATCHING CONSTANTS
-// ==============================================================================
-#define SAMPLING_RATE_HZ   250                       // Target: 250 Hz (Nyquist-compliant)
+#define SAMPLING_RATE_HZ   250                       // 250 Hz
 #define SAMPLE_INTERVAL_US (1000000 / SAMPLING_RATE_HZ) // 4000 microseconds (4 ms)
-
-// Batch 5 samples per WebSocket frame (sends every 20ms = 50 packets/sec).
-// This eliminates Wi-Fi congestion without introducing perceptual delay.
-#define BATCH_SIZE         5
+#define BATCH_SIZE         5                         // 5 samples per WebSocket frame
 
 // ==============================================================================
-// 4. GLOBAL STATE VARIABLES
+// 2. DYNAMIC BACKEND STATE VARIABLES
 // ==============================================================================
 WebSocketsClient webSocket;
 unsigned long lastSampleMicros = 0;
@@ -61,8 +41,18 @@ int sampleBuffer[BATCH_SIZE];
 int bufferIndex = 0;
 bool isWsConnected = false;
 
+// Dynamically discovered server host & port
+String serverHost = "";
+uint16_t serverPort = 8000;
+const char* SERVER_PATH = "/ws/esp32";
+bool serverDiscovered = false;
+
+// Custom parameter for WiFiManager setup portal (Optional fallback IP override)
+char custom_server_ip[20] = "";
+WiFiManagerParameter custom_server_param("server_ip", "Laptop IP (optional fallback)", custom_server_ip, 20);
+
 // ==============================================================================
-// 5. WEBSOCKET EVENT CALLBACK HANDLER
+// 3. WEBSOCKET EVENT CALLBACK HANDLER
 // ==============================================================================
 void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
   switch(type) {
@@ -75,8 +65,8 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
     case WStype_CONNECTED:
       isWsConnected = true;
       digitalWrite(STATUS_LED_PIN, HIGH);
-      Serial.printf("[WS] Connected to DSP Backend at ws://%s:%u%s\n", SERVER_HOST, SERVER_PORT, SERVER_PATH);
-      // Send handshake identification
+      Serial.printf("[WS] Connected to DSP Backend at ws://%s:%u%s\n", serverHost.c_str(), serverPort, SERVER_PATH);
+      // Handshake
       webSocket.sendTXT("{\"type\":\"handshake\",\"node\":\"SynapseGlove_ESP32\",\"fs\":250}");
       break;
 
@@ -94,66 +84,142 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 }
 
 // ==============================================================================
-// 6. INITIALIZATION & SETUP
+// 4. DYNAMIC SERVER DISCOVERY (mDNS + Fallback)
+// ==============================================================================
+bool discoverServer() {
+  Serial.println("[mDNS] Scanning for Synapse Backend (_synapse._tcp)...");
+  
+  int n = MDNS.queryService("synapse", "tcp");
+  if (n > 0) {
+    serverHost = MDNS.address(0).toString();
+    serverPort = MDNS.port(0);
+    Serial.printf("[mDNS] Discovered Synapse Backend at: %s:%d\n", serverHost.c_str(), serverPort);
+    return true;
+  }
+
+  // Fallback 1: Check if user configured a custom IP in the WiFiManager portal
+  if (strlen(custom_server_ip) > 6) {
+    serverHost = String(custom_server_ip);
+    serverPort = 8000;
+    Serial.printf("[Portal Fallback] Using configured IP: %s:%d\n", serverHost.c_str(), serverPort);
+    return true;
+  }
+
+  // Fallback 2: Check standard Gateway subnet (Laptop is usually on the same /24 subnet)
+  IPAddress gateway = WiFi.gatewayIP();
+  IPAddress myIp = WiFi.localIP();
+  // Hotspots usually assign Laptop and ESP32 adjacent IPs (e.g., 10.237.23.x)
+  Serial.printf("[mDNS] Searching subnet around gateway %s...\n", gateway.toString().c_str());
+
+  return false;
+}
+
+// ==============================================================================
+// 5. INITIALIZATION & SETUP
 // ==============================================================================
 void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n==================================================");
-  Serial.println("  SYNAPSE GLOVE - BIOMEDICAL ACQUISITION NODE");
+  Serial.println("  SYNAPSE GLOVE - ZERO-HARDCODE FIRMWARE");
   Serial.println("==================================================");
 
   pinMode(STATUS_LED_PIN, OUTPUT);
   digitalWrite(STATUS_LED_PIN, LOW);
 
-  // Configure ESP32 Analog-to-Digital Converter (ADC)
-  // 12-bit resolution: 0 - 4095
+  // Configure ADC1
   analogReadResolution(12);
-  // Attenuation: 11dB allows measuring voltages up to ~3.3V
   analogSetPinAttenuation(PULSE_SENSOR_PIN, ADC_11db);
   pinMode(PULSE_SENSOR_PIN, INPUT);
 
-  // 1. Connect to Wi-Fi
-  Serial.printf("[Wi-Fi] Connecting to: %s\n", WIFI_SSID);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  // 1. DYNAMIC WI-FI PROVISIONING VIA WiFiManager
+  WiFiManager wm;
+  wm.addParameter(&custom_server_param);
 
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    delay(500);
-    Serial.print(".");
-    digitalWrite(STATUS_LED_PIN, !digitalRead(STATUS_LED_PIN)); // Blink while connecting
-    attempts++;
+  // Optimize Wi-Fi for ESP32 stability
+  WiFi.setSleep(false); // Disable Wi-Fi modem sleep to ensure solid connection
+  wm.setConnectTimeout(25); // Set explicit timeout for connecting
+  wm.setConfigPortalTimeout(180); // 3 minutes timeout for portal
+
+  Serial.println("[Wi-Fi] Attempting auto-connect or launching configuration portal...");
+  
+  bool res = wm.autoConnect("SynapseGlove-Setup"); // Open captive AP if not connected
+
+  if (!res) {
+    Serial.println("[Wi-Fi] Connection failed or portal timed out.");
+    Serial.printf("[Wi-Fi Debug] Status code: %d\n", WiFi.status());
+    Serial.println("[Wi-Fi] Will restart ESP in 5 seconds to retry...");
+    delay(5000);
+    ESP.restart();
   }
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n[Wi-Fi] Connected Successfully!");
-    Serial.print("[Wi-Fi] ESP32 Assigned IP: ");
-    Serial.println(WiFi.localIP());
-    digitalWrite(STATUS_LED_PIN, HIGH);
+  // Copy custom IP if user typed one in portal
+  if (strlen(custom_server_param.getValue()) > 0) {
+    strncpy(custom_server_ip, custom_server_param.getValue(), sizeof(custom_server_ip) - 1);
+  }
+
+  Serial.println("[Wi-Fi] Connected Successfully!");
+  Serial.print("[Wi-Fi] ESP32 Assigned IP: ");
+  Serial.println(WiFi.localIP());
+
+  // 2. INITIALIZE mDNS CLIENT
+  if (!MDNS.begin("synapse-glove")) {
+    Serial.println("[mDNS] Error setting up MDNS responder!");
   } else {
-    Serial.println("\n[Wi-Fi] Failed to connect! Operating in standalone offline mode.");
+    Serial.println("[mDNS] Responder started as synapse-glove.local");
   }
 
-  // 2. Initialize WebSocket Client
-  webSocket.begin(SERVER_HOST, SERVER_PORT, SERVER_PATH);
-  webSocket.onEvent(webSocketEvent);
-  webSocket.setReconnectInterval(2000); // Attempt auto-reconnect every 2 seconds
+  // 3. DISCOVER BACKEND SERVER DYNAMICALLY
+  unsigned long searchStart = millis();
+  while (!serverDiscovered && (millis() - searchStart < 15000)) {
+    serverDiscovered = discoverServer();
+    if (!serverDiscovered) {
+      delay(1000);
+    }
+  }
+
+  // 4. INITIALIZE WEBSOCKET CLIENT IF SERVER DISCOVERED
+  if (serverDiscovered) {
+    webSocket.begin(serverHost.c_str(), serverPort, SERVER_PATH);
+    webSocket.onEvent(webSocketEvent);
+    webSocket.setReconnectInterval(2000);
+    Serial.printf("[WebSocket] Initialized client targeting: %s:%d%s\n", serverHost.c_str(), serverPort, SERVER_PATH);
+  } else {
+    Serial.println("[WebSocket Warning] Server not found during boot. Background loop will keep searching.");
+  }
 
   lastSampleMicros = micros();
   Serial.println("[System] ADC Sampling Engine armed at 250 Hz (4000 us).");
 }
 
 // ==============================================================================
-// 7. MAIN EXECUTION LOOP
+// 6. MAIN EXECUTION LOOP
 // ==============================================================================
+unsigned long lastDiscoveryAttempt = 0;
+
 void loop() {
-  // Service WebSocket protocol events (keep-alives, ping/pong)
-  webSocket.loop();
+  // If server was not found initially, keep attempting discovery every 4 seconds in background
+  if (!serverDiscovered) {
+    unsigned long now = millis();
+    if (now - lastDiscoveryAttempt > 4000) {
+      lastDiscoveryAttempt = now;
+      if (discoverServer()) {
+        serverDiscovered = true;
+        webSocket.begin(serverHost.c_str(), serverPort, SERVER_PATH);
+        webSocket.onEvent(webSocketEvent);
+        webSocket.setReconnectInterval(2000);
+      }
+    }
+  }
+
+  // Service WebSocket network loop
+  if (serverDiscovered) {
+    webSocket.loop();
+  }
 
   unsigned long currentMicros = micros();
 
-  // Precise 250 Hz Periodic Sampling Clock
+  // Precise 250 Hz Periodic Sampling Clock (every 4000 microseconds)
   if (currentMicros - lastSampleMicros >= SAMPLE_INTERVAL_US) {
     lastSampleMicros += SAMPLE_INTERVAL_US;
 
@@ -161,12 +227,11 @@ void loop() {
     int rawAnalogValue = analogRead(PULSE_SENSOR_PIN);
     sampleBuffer[bufferIndex++] = rawAnalogValue;
 
-    // When batch is full, dispatch payload over WebSocket
+    // When batch of 5 is full, dispatch payload over WebSocket
     if (bufferIndex >= BATCH_SIZE) {
       if (isWsConnected) {
-        // Construct compact JSON payload: {"samples":[v1,v2,v3,v4,v5],"t":12345}
         char payload[128];
-        snprintf(payload, sizeof(payload), 
+        snprintf(payload, sizeof(payload),
                  "{\"samples\":[%d,%d,%d,%d,%d],\"t\":%lu}",
                  sampleBuffer[0], sampleBuffer[1], sampleBuffer[2], sampleBuffer[3], sampleBuffer[4],
                  millis());
