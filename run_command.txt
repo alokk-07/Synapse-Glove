@@ -1,5 +1,29 @@
-command : python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-url : http://localhost:8000
+==============================================================================
+SYNAPSE GLOVE - CHEAT SHEET & QUICK COMMAND REFERENCE
+==============================================================================
 
-reupload script : pio run -t upload
-check hotspt ip : ipconfig
+1. RUN THE PYTHON DSP BACKEND & DASHBOARD:
+   python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+2. OPEN DASHBOARD IN YOUR BROWSER:
+   http://localhost:8000
+
+3. FLASH / UPLOAD CODE TO ESP32 (via PlatformIO Terminal):
+   pio run -t upload
+
+   (If COM port is not auto-detected, specify COM3: pio run -t upload --upload-port COM3)
+
+4. OPEN SERIAL MONITOR TO VIEW LIVE LOGS:
+   pio device monitor
+
+5. CHECK LAPTOP LOCAL IP ADDRESS (if needed):
+   ipconfig
+
+==============================================================================
+ZERO-HARDCODE WI-FI PROVISIONING (When on a New Network):
+1. ESP32 boots up. If it cannot find known Wi-Fi, it creates hotspot: "SynapseGlove-Setup"
+2. Connect your phone or laptop to "SynapseGlove-Setup".
+3. A portal opens (or visit http://192.168.4.1 in browser).
+4. Tap "Configure WiFi", choose your local network, enter password, and hit Save.
+5. ESP32 connects and auto-discovers the laptop running the backend via mDNS!
+==============================================================================
